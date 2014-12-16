@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fswatch/notify"
+	"notify"
 	"fmt"
 	"os"
 )
