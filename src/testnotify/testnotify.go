@@ -23,10 +23,10 @@ func doChanged(path string , mask uint32) {
 	fmt.Printf("changed contents: %s %s\n", path, maskToString(mask))
 }
 func doLinked(path string , path2 string, mask uint32) {
-	fmt.Printf("linked: %s %s %s\n", path, path2, maskToString(mask))
+	fmt.Printf("linked: %s %s %s\n", path2, path, maskToString(mask))
 }
 func doMoved(path string , path2 string, mask uint32) {
-	fmt.Printf("moved: %s %s %s\n", path, path2, maskToString(mask)) 
+	fmt.Printf("moved: %s %s %s\n", path2, path, maskToString(mask)) 
 }
 func doRemoved(path string , mask uint32) {
 	fmt.Printf("removed: %s %s\n", path, maskToString(mask))

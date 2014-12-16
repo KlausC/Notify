@@ -1,7 +1,6 @@
 package notify
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path"
@@ -174,9 +173,8 @@ func (wt *WT) unlink(wde *WatchDirent) {
 		delete(wt.moved, wde.cookie)
 	} else if wde.parent != nil && wde.parent.elements != nil {
 		delete(wde.parent.elements, wde.name)
-	}	
+	}
 }
-
 
 // removeHierarchy recursively removes all elements form wde.
 // then deletes wde from moved or parent elements.
@@ -201,7 +199,7 @@ func (wt *WT) statNewFile(wde *WatchDirent, name string) *WatchDirent {
 		return nil
 	}
 
-	path := wde.Path2(name)
+	path := wde.Path(name)
 	statidBuffer := Statid{}
 
 	if err := syscall.Lstat(path, &statidBuffer.filestat); err != nil {
@@ -211,7 +209,7 @@ func (wt *WT) statNewFile(wde *WatchDirent, name string) *WatchDirent {
 	if statidBuffer.filestat.Mode&WATCHED != 0 {
 		var savedfirst *WatchDirent = nil
 		statkey := statidBuffer.key()
-		statid, ok := wt.inodes[statkey]
+		statid, ok := wt.inodes[statkey] // check if there is already and entry for this inode
 		if ok {
 			savedfirst = statid.first
 			statid.filestat = statidBuffer.filestat
@@ -244,6 +242,7 @@ func addWatches(wde *WatchDirent, name string, wt *WT) {
 		}
 	}
 }
+
 // addWatches2 adds watches recursively after a directory has been created.
 func addWatches2(wde *WatchDirent, name string, wt *WT) {
 	wdenew := wt.statNewFile(wde, name)
@@ -256,16 +255,6 @@ func addWatches2(wde *WatchDirent, name string, wt *WT) {
 			wt.addWatch(wdenew)
 		}
 	}
-}
-
-// byteToString converts a byte slice to a string assuming UTF-8 encoding with NUL termination.
-func byteToString(b []byte, n uint32) string {
-
-	leng := bytes.IndexByte(b[:n], byte(0))
-	if leng < 0 {
-		leng = int(n)
-	}
-	return string(b[:leng])
 }
 
 /*
@@ -321,15 +310,6 @@ func (wt *WT) processSelf(event *Event, wde *WatchDirent) int {
 	return 0
 }
 
-// child looks up the name in the elements directory of parent.
-func (wde *WatchDirent) child(event *Event) (wdenew *WatchDirent) {
-	name := event.Name
-	wdenew, ok := wde.elements[name]
-	if !ok || wdenew == nil {
-		report(nil, "missing element", wde.Path2(name), 64)
-	}
-	return
-}
 // processCreate event
 func (wt *WT) processCreate(event *Event, wde *WatchDirent) int {
 	mask := event.Mask
@@ -338,7 +318,11 @@ func (wt *WT) processCreate(event *Event, wde *WatchDirent) int {
 	if wdenew == nil {
 		return 0
 	}
-	wt.callback(wt.ncb.Created, event, wdenew)
+	if wdenew.next != nil && event.Mask&syscall.IN_CREATE != 0 {
+		wt.callback2(wt.ncb.Linked, event, wdenew, wdenew.next.Path())
+	} else {
+		wt.callback(wt.ncb.Created, event, wdenew)
+	}
 	if mask&syscall.IN_ISDIR != 0 {
 		if wt.walkDirectory(wdenew, addWatches2) == nil {
 			wt.addWatch(wdenew)
@@ -380,7 +364,7 @@ func (wt *WT) processMovedTo(event *Event, wde *WatchDirent) int {
 	return 0
 }
 
-// destroyAndUnlink deletes this wde from all wt dictionaries. 
+// destroyAndUnlink deletes this wde from all wt dictionaries.
 func (wt *WT) destroyAndUnlink(wde *WatchDirent) {
 	if wde.wd > 0 {
 		delete(wt.data, wde.wd)
@@ -609,7 +593,7 @@ func (wt *WT) internalProcessNotify() (stop int) {
  Shutdown processing upon error or normal return.
  Callback function called whenever notify event asks for special activity.
  Catch all system panics generated while waiting for events.
- */
+*/
 func ProcessNotifyEvents(inv []string, exv []string, mask uint32, ncb *NotifyCallbacks) (res int) {
 
 	defer func() {
@@ -631,4 +615,3 @@ func ProcessNotifyEvents(inv []string, exv []string, mask uint32, ncb *NotifyCal
 	}
 	return wt.internalProcessNotify()
 }
-

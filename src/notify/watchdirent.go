@@ -34,23 +34,24 @@ func (wde *WatchDirent) Cookie() uint32 {
 }
 
 // Path constructs complete path of hierarchy
-func (wde *WatchDirent) Path() (pa string) {
+func (wde *WatchDirent) Path1() (pa string) {
 	pa = wde.name
 	if wde.parent == nil {
 		return
 	}
-	dir := wde.parent.Path()
+	dir := wde.parent.Path1()
 	if len(dir) > 0 {
 		pa = path.Join(dir, pa)
 	}
 	return
 }
 
-func (wde *WatchDirent) Path2(name string) (pa string) {
-	dir := wde.Path()
-	pa = name
-	if len(dir) > 0 {
-		pa = path.Join(dir, name)
+
+// Path adds a name to a directory path defined by this wde.
+func (wde *WatchDirent) Path(names ... string) (pa string) {
+	pa = wde.Path1()
+	for _, name := range names {
+		pa = path.Join(pa, name)
 	}
 	return
 }
@@ -77,4 +78,22 @@ func (wde *WatchDirent) Dequeue() {
 		}
 		previous = &next.next
 	}
+}
+
+// child looks up the name in the elements directory of parent.
+func (wde *WatchDirent) child(event *Event) (wdenew *WatchDirent) {
+	name := event.Name
+	wdenew, ok := wde.elements[name]
+	if !ok || wdenew == nil {
+		report(nil, "missing element", wde.Path(name), 64)
+	}
+	return
+}
+
+// linkCount gives number of wdes having same inode
+func (wde *WatchDirent) linkCount() (count int) {
+	for wden := wde.statid.first; wden != nil; wden = wden.next {
+		count += 1
+	}
+	return
 }

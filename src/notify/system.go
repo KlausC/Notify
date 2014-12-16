@@ -4,6 +4,7 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
+	"bytes"
 )
 
 type Event struct {
@@ -220,4 +221,14 @@ func MaskToString(mask uint32) (s string) {
 		}
 	}
 	return s
+}
+
+// byteToString converts a byte slice to a string assuming UTF-8 encoding with NUL termination.
+func byteToString(b []byte, n uint32) string {
+
+	leng := bytes.IndexByte(b[:n], byte(0))
+	if leng < 0 {
+		leng = int(n)
+	}
+	return string(b[:leng])
 }
