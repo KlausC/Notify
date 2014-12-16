@@ -1,2 +1,2 @@
 #! /bin/sh
-go install -compiler gccgo -gccgoflags '-g' fswatch/testnotify
+GOPATH=$PWD go install -compiler gccgo -gccgoflags '-g' testnotify

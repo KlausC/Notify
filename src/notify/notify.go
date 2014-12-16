@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"syscall"
 	"path"
+	"syscall"
 )
 
 const NAME_MAX = 255
@@ -14,98 +14,25 @@ const NAME_MAX = 255
 NotifyCallbacks is a list of callback function provided by the user
 */
 type NotifyCallbacks struct {
-	Report  func(string, *Event)
-	Created func(string, uint32)
-	Deleted func(string, uint32)
-	Changed func(string, uint32)
-	Linked  func(string, string, uint32)
-	Moved   func(string, string, uint32)
-	Removed func(string, uint32)
+	Report    func(string, *Event)
+	Created   func(string, uint32)
+	Deleted   func(string, uint32)
+	Changed   func(string, uint32)
+	Linked    func(string, string, uint32)
+	Moved     func(string, string, uint32)
+	Removed   func(string, uint32)
 	Attribute func(string, uint32)
-}
-
-/*
-	WatchDirent represents a directory entry
-*/
-type WatchDirent struct {
-	wd       uint32
-	name     string
-	parent   *WatchDirent
-	next     *WatchDirent
-	statid   *Statid
-	cookie   uint32
-	elements map[string]*WatchDirent
-}
-
-func (wde *WatchDirent) Cleanup() {
-	wde.name = ""
-	wde.parent = nil
-	wde.elements = nil
-}
-
-// Cookie searches first cookie in hierarchy
-func (wde *WatchDirent) Cookie() uint32 {
-	if wde.parent == nil || wde.cookie != 0 {
-		return wde.cookie
-	}
-	return wde.parent.Cookie()
-}
-
-// Path constructs complete path of hierarchy
-func (wde *WatchDirent) Path() (pa string) {
-	pa = wde.name
-	if wde.parent == nil {
-		return
-	}
-	dir := wde.parent.Path()
-	if len(dir) > 0 {
-		pa = path.Join(dir, pa)
-	}
-	return
-}
-
-func (wde *WatchDirent) Path2(name string) (pa string) {
-	dir := wde.Path()
-	pa = name
-	if len(dir) > 0 {
-		pa = path.Join(dir, name)
-	}
-	return
-}
-
-// createWatchDirent constructor
-func createWatchDirent(parent *WatchDirent, name string, isdir bool) (wdenew *WatchDirent) {
-	wdenew = &WatchDirent{name: name, parent: parent}
-	if isdir {
-		wdenew.elements = make(map[string]*WatchDirent)
-	}
-	return
-}
-
-/*
-	Dequeue removes this entry from the linked list
-*/
-func (wde *WatchDirent) Dequeue() {
-	previous := &wde.statid.first
-	for next := *previous; next != nil; next = *previous {
-		if next == wde {
-			*previous = next.next
-			next.next = nil
-			break
-		}
-		previous = &next.next
-	}
 }
 
 /* WT - Central watchtable object definition.
 Note that dictionary objects are all included in this structure.
 */
 type WT struct {
-	data     map[uint32]*WatchDirent  // map of wd to watchDirents
+	data     map[uint32]*WatchDirent // map of wd to watchDirents
 	inodes   map[Stat_key]*Statid    // set of stat by inode
 	excludes map[string]bool         // set of path names to be excluded
 	moved    map[uint32]*WatchDirent // wachDirents moved away from dir
-	reader	 EventReader			// Event reader
+	reader   EventReader             // Event reader
 	root     WatchDirent             // directory entry containing all root paths
 	ncb      *NotifyCallbacks        // functions to be called
 }
@@ -149,7 +76,7 @@ func report(err error, a, b string, ec int) {
 /*
  * Call the callback function for each directory entry.
  * The pseudo subdirectories "." and ".." are excluded.
-*/
+ */
 func (wt *WT) walkDirectory(wde *WatchDirent, action func(*WatchDirent, string, *WT)) (err error) {
 	dir := wde.Path()
 	file, err := os.Open(dir)
@@ -213,6 +140,8 @@ func (wt *WT) addExclude(path string) {
 	wt.excludes[path] = true
 }
 
+// DequeueAndMaybeFreeStatus calls Dequeue on wde
+// and deletes the Statid if that has no more reference in directory.
 func (wt *WT) dequeueAndMaybeFreeStatus(wde *WatchDirent) {
 	wde.Dequeue()
 	if wde.statid.first == nil {
@@ -239,16 +168,24 @@ func (wt *WT) removeHierarchyRec(wde *WatchDirent) {
 	wt.destroyAndUnlink(wde)
 }
 
-func (wt *WT) removeHierarchy(wde *WatchDirent) {
-	wt.removeHierarchyRec(wde)
-
+// unlink deletes wde from moved directory of from parent directory.
+func (wt *WT) unlink(wde *WatchDirent) {
 	if wde.cookie != 0 {
 		delete(wt.moved, wde.cookie)
 	} else if wde.parent != nil && wde.parent.elements != nil {
 		delete(wde.parent.elements, wde.name)
-	}
+	}	
 }
 
+
+// removeHierarchy recursively removes all elements form wde.
+// then deletes wde from moved or parent elements.
+func (wt *WT) removeHierarchy(wde *WatchDirent) {
+	wt.removeHierarchyRec(wde)
+	wt.unlink(wde)
+}
+
+// WATCHED is binary mask for all file modes as observed in struct stat
 const WATCHED = syscall.S_IFREG | syscall.S_IFDIR | syscall.S_IFLNK
 
 /*
@@ -307,7 +244,7 @@ func addWatches(wde *WatchDirent, name string, wt *WT) {
 		}
 	}
 }
-
+// addWatches2 adds watches recursively after a directory has been created.
 func addWatches2(wde *WatchDirent, name string, wt *WT) {
 	wdenew := wt.statNewFile(wde, name)
 	if wdenew == nil {
@@ -321,6 +258,7 @@ func addWatches2(wde *WatchDirent, name string, wt *WT) {
 	}
 }
 
+// byteToString converts a byte slice to a string assuming UTF-8 encoding with NUL termination.
 func byteToString(b []byte, n uint32) string {
 
 	leng := bytes.IndexByte(b[:n], byte(0))
@@ -341,6 +279,7 @@ func (wt *WT) debug(event *Event) {
 	}
 }
 
+// callback calls the callback function with one path variable.
 func (wt *WT) callback(cb func(string, uint32), event *Event, wde *WatchDirent) {
 
 	if cb != nil {
@@ -349,6 +288,7 @@ func (wt *WT) callback(cb func(string, uint32), event *Event, wde *WatchDirent) 
 	}
 }
 
+// callback2 calls a callback function with an additional string parameter
 func (wt *WT) callback2(cb func(string, string, uint32), event *Event, wde *WatchDirent, altpath string) {
 
 	if cb != nil {
@@ -357,6 +297,7 @@ func (wt *WT) callback2(cb func(string, string, uint32), event *Event, wde *Watc
 	}
 }
 
+// process the IN_..._SELF events (which have no Name in InotifyEvent).
 func (wt *WT) processSelf(event *Event, wde *WatchDirent) int {
 	mask := event.Mask
 
@@ -380,7 +321,8 @@ func (wt *WT) processSelf(event *Event, wde *WatchDirent) int {
 	return 0
 }
 
-func (wde *WatchDirent)child(event *Event) (wdenew *WatchDirent) {
+// child looks up the name in the elements directory of parent.
+func (wde *WatchDirent) child(event *Event) (wdenew *WatchDirent) {
 	name := event.Name
 	wdenew, ok := wde.elements[name]
 	if !ok || wdenew == nil {
@@ -388,7 +330,7 @@ func (wde *WatchDirent)child(event *Event) (wdenew *WatchDirent) {
 	}
 	return
 }
-
+// processCreate event
 func (wt *WT) processCreate(event *Event, wde *WatchDirent) int {
 	mask := event.Mask
 	name := event.Name
@@ -406,6 +348,7 @@ func (wt *WT) processCreate(event *Event, wde *WatchDirent) int {
 	return 0
 }
 
+// processMovedFrom event
 func (wt *WT) processMovedFrom(event *Event, wdenew *WatchDirent) int {
 	if wdenew == nil {
 		return 0
@@ -417,6 +360,7 @@ func (wt *WT) processMovedFrom(event *Event, wdenew *WatchDirent) int {
 	return 0
 }
 
+// processMovedTo event
 func (wt *WT) processMovedTo(event *Event, wde *WatchDirent) int {
 
 	wdenew, ok := wt.moved[event.Cookie]
@@ -436,17 +380,15 @@ func (wt *WT) processMovedTo(event *Event, wde *WatchDirent) int {
 	return 0
 }
 
+// destroyAndUnlink deletes this wde from all wt dictionaries. 
 func (wt *WT) destroyAndUnlink(wde *WatchDirent) {
 	if wde.wd > 0 {
 		delete(wt.data, wde.wd)
 	}
-	if wde.cookie > 0 {
-		delete(wt.moved, wde.cookie)
-	} else if wde.parent != nil && wde.parent.elements != nil && len(wde.name) > 0 {
-		delete(wde.parent.elements, wde.name)
-	}
+	wt.unlink(wde)
 }
 
+// processDelete event
 func (wt *WT) processDelete(event *Event, wdenew *WatchDirent) int {
 
 	if wdenew == nil {
@@ -458,6 +400,7 @@ func (wt *WT) processDelete(event *Event, wdenew *WatchDirent) int {
 	return 0
 }
 
+// modifyComplete is called after a file contents change is concluded.
 func (wt *WT) modifyComplete(event *Event, wde *WatchDirent) (res int) {
 	if wde != nil && wde.statid.isChangeComplete() {
 		wt.callback(wt.ncb.Changed, event, wde)
@@ -466,6 +409,7 @@ func (wt *WT) modifyComplete(event *Event, wde *WatchDirent) (res int) {
 	return
 }
 
+// attributeComplete is called after each attribute change event
 func (wt *WT) attributeComplete(event *Event, wde *WatchDirent) (res int) {
 	if wde != nil && wde.statid.isAttributeComplete() {
 		wt.callback(wt.ncb.Attribute, event, wde)
@@ -474,23 +418,29 @@ func (wt *WT) attributeComplete(event *Event, wde *WatchDirent) (res int) {
 	return
 }
 
+// processModify event - only smask bit is set
 func (wt *WT) processModify(event *Event, wdenew *WatchDirent) (res int) {
 	wdenew.statid.smask |= syscall.IN_MODIFY
 	return
 }
+
+// processClose Event - eventually conclude modification of file contents
 func (wt *WT) processClose(event *Event, wdenew *WatchDirent) (res int) {
-	if wdenew.statid.smask & syscall.IN_MODIFY != 0 {
+	if wdenew.statid.smask&syscall.IN_MODIFY != 0 {
 		wdenew.statid.smask |= syscall.IN_CLOSE_WRITE
 		res = wt.modifyComplete(event, wdenew)
-}
+	}
 	return
 }
+
+// processAttribute event
 func (wt *WT) processAttribute(event *Event, wdenew *WatchDirent) (res int) {
 	wdenew.statid.smask |= syscall.IN_ATTRIB
 	res = wt.attributeComplete(event, wdenew)
 	return
 }
 
+// processSubfile seledct the proper event processing function
 func (wt *WT) processSubfile(event *Event, wde *WatchDirent) (res int) {
 	mask := event.Mask
 	switch {
@@ -590,7 +540,7 @@ func actionPrintHierarchy(wde *WatchDirent, depth int) {
 }
 
 func (wde *WatchDirent) Walk(action func(*WatchDirent, int), depth int) {
-	if wde  != nil && wde.statid != nil {
+	if wde != nil && wde.statid != nil {
 		action(wde, depth)
 	}
 	for _, wdenew := range wde.elements {
@@ -631,10 +581,6 @@ func fillWatchTable(inv []string, exv []string, mask uint32, ncb *NotifyCallback
 	return wt
 }
 
-func (wt *WT) cleanupWatchtable() {
-
-}
-
 /*
  * Perform processing loop.
  */
@@ -659,16 +605,13 @@ func (wt *WT) internalProcessNotify() (stop int) {
 }
 
 /*
- * Initialise processing and perform processing loop.
- * Shutdown processing upon error or normal return.
- * Callback function called whenever notify event asks for special activity.
+ Initialise processing and perform processing loop.
+ Shutdown processing upon error or normal return.
+ Callback function called whenever notify event asks for special activity.
+ Catch all system panics generated while waiting for events.
  */
 func ProcessNotifyEvents(inv []string, exv []string, mask uint32, ncb *NotifyCallbacks) (res int) {
 
-	wt := fillWatchTable(inv, exv, mask, ncb)
-	if wt == nil {
-		return 1
-	}
 	defer func() {
 		err := recover()
 		switch err := err.(type) {
@@ -682,32 +625,10 @@ func ProcessNotifyEvents(inv []string, exv []string, mask uint32, ncb *NotifyCal
 		}
 	}()
 
+	wt := fillWatchTable(inv, exv, mask, ncb)
+	if wt == nil {
+		return 1
+	}
 	return wt.internalProcessNotify()
 }
 
-func MaskToString(mask uint32) (s string) {
-	names := []string{
-		"ACCESS", "MODIFY", "ATTRIB", "CLOSE_WRITE", "CLOSE_NOWRITE",
-		"OPEN", "MOVED_FROM", "MOVED_TO", "MOVE_SELF",
-		"CREATE", "DELETE", "DELETE_SELF", "UNMOUNT", "Q_OVERFLOW", "IGNORED",
-		"DIR",
-	}
-	masks := []uint32{
-		syscall.IN_ACCESS, syscall.IN_MODIFY, syscall.IN_ATTRIB,
-		syscall.IN_CLOSE_WRITE, syscall.IN_CLOSE_NOWRITE,
-		syscall.IN_OPEN, syscall.IN_MOVED_FROM, syscall.IN_MOVED_TO,
-		syscall.IN_MOVE_SELF, syscall.IN_CREATE, syscall.IN_DELETE,
-		syscall.IN_DELETE_SELF, syscall.IN_UNMOUNT, syscall.IN_Q_OVERFLOW,
-		syscall.IN_IGNORED, syscall.IN_ISDIR,
-	}
-
-	for i := 0; i < len(names); i++ {
-		if mask&masks[i] != 0 {
-			if len(s) > 0 {
-				s += ","
-			}
-			s += names[i]
-		}
-	}
-	return s
-}
