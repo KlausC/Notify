@@ -144,7 +144,7 @@ func (wt *WT) addExclude(path string) {
 func (wt *WT) dequeueAndMaybeFreeStatus(wde *WatchDirent) {
 	wde.Dequeue()
 	if wde.statid.first == nil {
-		delete(wt.inodes, key(&wde.statid.filestat))
+		delete(wt.inodes, wde.statid.key())
 	}
 }
 

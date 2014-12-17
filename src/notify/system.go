@@ -7,6 +7,7 @@ import (
 	"bytes"
 )
 
+// Event convenient variant of InotifyEvent
 type Event struct {
 	Wd     uint32
 	Mask   uint32
@@ -44,41 +45,12 @@ syscall.IN_ATTRIB |
 	syscall.IN_Q_OVERFLOW |
 	syscall.IN_IGNORED
 
-func eventName(event *syscall.InotifyEvent) string {
-	size := event.Len
-	b := make([]byte, event.Len)
-	p0 := uintptr(unsafe.Pointer(&event.Name))
-	for i := uint32(0); i < event.Len; i++ {
-		b[i] = *(*byte)(unsafe.Pointer(uintptr(i) + p0))
-		if b[i] == 0 {
-			size = i
-			break
-		}
-	}
-	//D fmt.Printf("eventName: size=%d Len=%d %s\n", size, event.Len, b)
-	return string(b[:size])
-}
 
-// eventPointer converts a byte address into a InotifyEvent address
-func eventPointer(ba *byte) (event *syscall.InotifyEvent) {
-	event = (*syscall.InotifyEvent)(unsafe.Pointer(ba))
-	return event
-}
-
-// address converts a Statid address into an integer
-func (addr *Statid) address() uintptr {
-	return uintptr(unsafe.Pointer(addr))
-}
 
 // Stat_key is the key of an inode
 type Stat_key struct {
 	Dev uint64
 	Ino uint64
-}
-
-// key extracts Stat_key from Stat_t
-func key(stat *syscall.Stat_t) Stat_key {
-	return Stat_key{stat.Dev, stat.Ino}
 }
 
 /*
@@ -90,24 +62,34 @@ type Statid struct {
 	filestat syscall.Stat_t // file status as read from syscall.Lstat
 }
 
-func (s *Statid) key() Stat_key {
-	return key(&s.filestat)
+// address converts a Statid address into an integer
+func (addr *Statid) address() uintptr {
+	return uintptr(unsafe.Pointer(addr))
 }
 
+// key returns the key part of the Statid (dev, ino)
+func (s *Statid) key() Stat_key {
+	return Stat_key{s.filestat.Dev, s.filestat.Ino}
+}
+
+// reset the MODIFY and CLOSE bits
 func (s *Statid) resetChanged() {
 	const mask uint32 = syscall.IN_MODIFY | syscall.IN_CLOSE_WRITE
 	s.smask &= ^mask
 }
 
+// check if modify is compled by CLOSE
 func (s *Statid) isChangeComplete() bool {
 	const mask uint32 = syscall.IN_MODIFY | syscall.IN_CLOSE_WRITE
 	return (s.smask & mask) == mask
 }
 
+// reset ATTRUBTE bit
 func (s *Statid) resetAttribute() {
 	s.smask &= ^uint32(syscall.IN_ATTRIB)
 }
 
+// check ATTRIBUTE bit
 func (s *Statid) isAttributeComplete() bool {
 	const mask uint32 = syscall.IN_ATTRIB
 	return s.smask&mask == mask
@@ -196,6 +178,29 @@ func (er *EventReader) NextEvent() (ev *Event, err error) {
 	return
 }
 
+// eventName extracts the name string from the Name byte slice of the InotifyEvent
+func eventName(event *syscall.InotifyEvent) string {
+	size := event.Len
+	b := make([]byte, event.Len)
+	p0 := uintptr(unsafe.Pointer(&event.Name))
+	for i := uint32(0); i < event.Len; i++ {
+		b[i] = *(*byte)(unsafe.Pointer(uintptr(i) + p0))
+		if b[i] == 0 {
+			size = i
+			break
+		}
+	}
+	//D fmt.Printf("eventName: size=%d Len=%d %s\n", size, event.Len, b)
+	return string(b[:size])
+}
+
+// eventPointer converts a byte address into a InotifyEvent address
+func eventPointer(ba *byte) (event *syscall.InotifyEvent) {
+	event = (*syscall.InotifyEvent)(unsafe.Pointer(ba))
+	return event
+}
+
+// MaskToString produces a readable string form the Inotify bit mask
 func MaskToString(mask uint32) (s string) {
 	names := []string{
 		"ACCESS", "MODIFY", "ATTRIB", "CLOSE_WRITE", "CLOSE_NOWRITE",
