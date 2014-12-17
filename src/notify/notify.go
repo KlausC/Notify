@@ -7,33 +7,70 @@ import (
 	"syscall"
 )
 
-const NAME_MAX = 255
+type Event struct {
+	EventType    EventType
+	IsDir        bool
+	DataModified bool
+	Path         string
+	Path2        string
+	Key          StatKey
+}
 
 /*
 NotifyCallbacks is a list of callback function provided by the user
 */
 type NotifyCallbacks struct {
-	Report    func(string, *Event)
-	Created   func(string, uint32)
-	Deleted   func(string, uint32)
-	Changed   func(string, uint32)
-	Linked    func(string, string, uint32)
-	Moved     func(string, string, uint32)
-	Removed   func(string, uint32)
-	Attribute func(string, uint32)
+	Report ReportCallback
+	Event  EventCallback
+}
+
+type (
+	ReportCallback func(string, *EventIntern)
+	EventCallback  func(ev *Event)
+)
+type EventType uint8
+
+const (
+	CREATE    = EventType(1)
+	DELETE    = EventType(2)
+	MOVE      = EventType(3)
+	LINK      = EventType(4)
+	ATTRIBUTE = EventType(5)
+	CHANGE    = EventType(6)
+)
+
+func (et EventType) String() (out string) {
+	switch et {
+	case CREATE:
+		out = "CREATE"
+	case DELETE:
+		out = "DELETE"
+	case MOVE:
+		out = "MOVE"
+	case LINK:
+		out = "LINK"
+	case ATTRIBUTE:
+		out = "ATTRIBUTE"
+	case CHANGE:
+		out = "CHANGE"
+	default:
+		out = "NOP"
+	}
+	return
 }
 
 /* WT - Central watchtable object definition.
 Note that dictionary objects are all included in this structure.
 */
 type WT struct {
-	data     map[uint32]*WatchDirent // map of wd to watchDirents
-	inodes   map[Stat_key]*Statid    // set of stat by inode
-	excludes map[string]bool         // set of path names to be excluded
-	moved    map[uint32]*WatchDirent // wachDirents moved away from dir
-	reader   EventReader             // Event reader
-	root     WatchDirent             // directory entry containing all root paths
-	ncb      *NotifyCallbacks        // functions to be called
+	data          map[uint32]*WatchDirent // map of wd to watchDirents
+	inodes        map[StatKey]*Statid     // set of stat by inode
+	excludes      map[string]bool         // set of path names to be excluded
+	moved         map[uint32]*WatchDirent // wachDirents moved away from dir
+	reader        EventReader             // Event reader
+	root          WatchDirent             // directory entry containing all root paths
+	ncb           *NotifyCallbacks        // functions to be called
+	pendingCookie uint32                  // cookie form last movedFrom event
 }
 
 // createWatchTable constructor
@@ -41,7 +78,7 @@ func createWatchTable(mask uint32) (wt *WT) {
 	wt = &WT{}
 	wt.reader.Init(mask)
 	wt.data = make(map[uint32]*WatchDirent)
-	wt.inodes = make(map[Stat_key]*Statid)
+	wt.inodes = make(map[StatKey]*Statid)
 	wt.moved = make(map[uint32]*WatchDirent)
 	wt.excludes = make(map[string]bool)
 	wt.root = WatchDirent{elements: make(map[string]*WatchDirent)}
@@ -249,8 +286,9 @@ func addWatches2(wde *WatchDirent, name string, wt *WT) {
 	if wdenew == nil {
 		return
 	}
-	wt.callback(wt.ncb.Created, &Event{}, wdenew)
-	if wdenew != nil && wdenew.statid.filestat.Mode&syscall.S_IFDIR != 0 {
+	isDir := wdenew.statid.filestat.Mode&syscall.S_IFDIR != 0
+	wt.callback(CREATE, &EventIntern{}, wdenew, false)
+	if wdenew != nil && isDir {
 		if wt.walkDirectory(wdenew, addWatches2) == nil {
 			wt.addWatch(wdenew)
 		}
@@ -260,7 +298,7 @@ func addWatches2(wde *WatchDirent, name string, wt *WT) {
 /*
  * Call the external callbacks.
  */
-func (wt *WT) debug(event *Event) {
+func (wt *WT) debug(event *EventIntern) {
 	name := event.Name
 	buffer := fmt.Sprintf("debug: wd= %d name=\"%s\"", event.Wd, name)
 	if wt.ncb != nil && wt.ncb.Report != nil {
@@ -268,26 +306,27 @@ func (wt *WT) debug(event *Event) {
 	}
 }
 
-// callback calls the callback function with one path variable.
-func (wt *WT) callback(cb func(string, uint32), event *Event, wde *WatchDirent) {
+// callback calls a callback function with an additional string parameter
+func (wt *WT) callback(et EventType, event *EventIntern, wde *WatchDirent, data bool, altpath ...string) {
 
-	if cb != nil {
-		path := wde.Path()
-		cb(path, event.Mask)
-	}
-}
-
-// callback2 calls a callback function with an additional string parameter
-func (wt *WT) callback2(cb func(string, string, uint32), event *Event, wde *WatchDirent, altpath string) {
-
-	if cb != nil {
-		path := wde.Path()
-		cb(path, altpath, event.Mask)
+	if wt.ncb != nil && wt.ncb.Event != nil {
+		var ev Event
+		ev.EventType = et
+		ev.IsDir = wde.statid.filestat.Mode&syscall.S_IFDIR != 0
+		ev.DataModified = data
+		if len(altpath) > 0 {
+			ev.Path = altpath[0]
+			ev.Path2 = wde.Path()
+		} else {
+			ev.Path = wde.Path()
+		}
+		ev.Key = wde.statid.key()
+		wt.ncb.Event(&ev)
 	}
 }
 
 // process the IN_..._SELF events (which have no Name in InotifyEvent).
-func (wt *WT) processSelf(event *Event, wde *WatchDirent) int {
+func (wt *WT) processSelf(event *EventIntern, wde *WatchDirent) int {
 	mask := event.Mask
 
 	switch {
@@ -296,14 +335,24 @@ func (wt *WT) processSelf(event *Event, wde *WatchDirent) int {
 		fmt.Printf("node- %d %s\n", event.Wd, path)
 		delete(wt.data, event.Wd)
 	case mask&syscall.IN_MOVE_SELF != 0:
-		// move-from is missing or not subfile of supervised directory */
+		// move-to is missing or not subfile of supervised directory */
 		if wde.cookie > 0 || wde.parent.wd == 0 {
 			wt.removeHierarchy(wde)
+			event.Mask |= syscall.IN_ISDIR
+			wt.pendingCookie = 0
+			wt.callback(DELETE, event, wde, false)
 		}
 	case mask&syscall.IN_DELETE_SELF != 0:
 		if wde.parent.wd == 0 {
 			wde.wd = 0
 			wt.removeHierarchy(wde)
+			event.Mask |= syscall.IN_ISDIR
+			wt.callback(DELETE, event, wde, true)
+		}
+	case mask&syscall.IN_ATTRIB != 0:
+		if wde.parent.wd == 0 {
+			wde.wd = 0
+			return wt.processAttribute(event, wde)
 		}
 	}
 
@@ -311,17 +360,18 @@ func (wt *WT) processSelf(event *Event, wde *WatchDirent) int {
 }
 
 // processCreate event
-func (wt *WT) processCreate(event *Event, wde *WatchDirent) int {
+func (wt *WT) processCreate(event *EventIntern, wde *WatchDirent) int {
 	mask := event.Mask
 	name := event.Name
 	wdenew := wt.statNewFile(wde, name)
 	if wdenew == nil {
 		return 0
 	}
-	if wdenew.next != nil && event.Mask&syscall.IN_CREATE != 0 {
-		wt.callback2(wt.ncb.Linked, event, wdenew, wdenew.next.Path())
+	createEvent := event.Mask&syscall.IN_CREATE != 0
+	if wdenew.next != nil && createEvent {
+		wt.callback(LINK, event, wdenew, false, wdenew.next.Path())
 	} else {
-		wt.callback(wt.ncb.Created, event, wdenew)
+		wt.callback(CREATE, event, wdenew, !createEvent)
 	}
 	if mask&syscall.IN_ISDIR != 0 {
 		if wt.walkDirectory(wdenew, addWatches2) == nil {
@@ -333,11 +383,12 @@ func (wt *WT) processCreate(event *Event, wde *WatchDirent) int {
 }
 
 // processMovedFrom event
-func (wt *WT) processMovedFrom(event *Event, wdenew *WatchDirent) int {
+func (wt *WT) processMovedFrom(event *EventIntern, wdenew *WatchDirent) int {
 	if wdenew == nil {
 		return 0
 	}
 	wdenew.cookie = event.Cookie
+	wt.pendingCookie = wdenew.cookie
 	delete(wdenew.parent.elements, wdenew.name)
 	wt.moved[wdenew.cookie] = wdenew
 	wdenew.Dequeue()
@@ -345,10 +396,11 @@ func (wt *WT) processMovedFrom(event *Event, wdenew *WatchDirent) int {
 }
 
 // processMovedTo event
-func (wt *WT) processMovedTo(event *Event, wde *WatchDirent) int {
+func (wt *WT) processMovedTo(event *EventIntern, wde *WatchDirent) int {
 
 	wdenew, ok := wt.moved[event.Cookie]
 	if !ok {
+		// no corresponding movedFrom
 		return wt.processCreate(event, wde)
 	} else {
 		oldpath := wdenew.Path()
@@ -359,7 +411,7 @@ func (wt *WT) processMovedTo(event *Event, wde *WatchDirent) int {
 		statid := wdenew.statid
 		wdenew.next = statid.first
 		statid.first = wdenew
-		wt.callback2(wt.ncb.Moved, event, wdenew, oldpath)
+		wt.callback(MOVE, event, wdenew, false, oldpath)
 	}
 	return 0
 }
@@ -373,43 +425,43 @@ func (wt *WT) destroyAndUnlink(wde *WatchDirent) {
 }
 
 // processDelete event
-func (wt *WT) processDelete(event *Event, wdenew *WatchDirent) int {
+func (wt *WT) processDelete(event *EventIntern, wdenew *WatchDirent) int {
 
 	if wdenew == nil {
 		return 0
 	}
-	wt.callback(wt.ncb.Deleted, event, wdenew)
+	wt.callback(DELETE, event, wdenew, wdenew.linkCount() <= 1)
 	wt.removeHierarchy(wdenew)
 	delete(wdenew.parent.elements, wdenew.name)
 	return 0
 }
 
 // modifyComplete is called after a file contents change is concluded.
-func (wt *WT) modifyComplete(event *Event, wde *WatchDirent) (res int) {
+func (wt *WT) modifyComplete(event *EventIntern, wde *WatchDirent) (res int) {
 	if wde != nil && wde.statid.isChangeComplete() {
-		wt.callback(wt.ncb.Changed, event, wde)
+		wt.callback(CHANGE, event, wde, true)
 		wde.statid.resetChanged()
 	}
 	return
 }
 
 // attributeComplete is called after each attribute change event
-func (wt *WT) attributeComplete(event *Event, wde *WatchDirent) (res int) {
+func (wt *WT) attributeComplete(event *EventIntern, wde *WatchDirent) (res int) {
 	if wde != nil && wde.statid.isAttributeComplete() {
-		wt.callback(wt.ncb.Attribute, event, wde)
+		wt.callback(ATTRIBUTE, event, wde, false)
 		wde.statid.resetAttribute()
 	}
 	return
 }
 
 // processModify event - only smask bit is set
-func (wt *WT) processModify(event *Event, wdenew *WatchDirent) (res int) {
+func (wt *WT) processModify(event *EventIntern, wdenew *WatchDirent) (res int) {
 	wdenew.statid.smask |= syscall.IN_MODIFY
 	return
 }
 
 // processClose Event - eventually conclude modification of file contents
-func (wt *WT) processClose(event *Event, wdenew *WatchDirent) (res int) {
+func (wt *WT) processClose(event *EventIntern, wdenew *WatchDirent) (res int) {
 	if wdenew.statid.smask&syscall.IN_MODIFY != 0 {
 		wdenew.statid.smask |= syscall.IN_CLOSE_WRITE
 		res = wt.modifyComplete(event, wdenew)
@@ -418,14 +470,14 @@ func (wt *WT) processClose(event *Event, wdenew *WatchDirent) (res int) {
 }
 
 // processAttribute event
-func (wt *WT) processAttribute(event *Event, wdenew *WatchDirent) (res int) {
+func (wt *WT) processAttribute(event *EventIntern, wdenew *WatchDirent) (res int) {
 	wdenew.statid.smask |= syscall.IN_ATTRIB
 	res = wt.attributeComplete(event, wdenew)
 	return
 }
 
 // processSubfile seledct the proper event processing function
-func (wt *WT) processSubfile(event *Event, wde *WatchDirent) (res int) {
+func (wt *WT) processSubfile(event *EventIntern, wde *WatchDirent) (res int) {
 	mask := event.Mask
 	switch {
 	case mask&syscall.IN_CREATE != 0:
@@ -453,10 +505,10 @@ func (wt *WT) processSubfile(event *Event, wde *WatchDirent) (res int) {
  * processing loop to be stopped.
  * return 1: No more directories/files to be watched
  * return 2: For overflow of event queue
- * return 3: Event with zero watch descriptor
+ * return 3: EventIntern with zero watch descriptor
  * return 4: Registered path is NULL
  */
-func (wt *WT) processEvent(event *Event) (res int) {
+func (wt *WT) processEvent(event *EventIntern) (res int) {
 
 	name := event.Name
 	mask := event.Mask
@@ -474,6 +526,9 @@ func (wt *WT) processEvent(event *Event) (res int) {
 	if !ok {
 		return 0 // silently ignore
 	}
+
+	wt.simulateMovedToEvent(event) // test for missing movedTo event when file moved out
+
 	if len(name) == 0 {
 		res = wt.processSelf(event, wde)
 	} else {
@@ -484,6 +539,14 @@ func (wt *WT) processEvent(event *Event) (res int) {
 		res = 1
 	}
 	return res
+}
+
+func (wt *WT) simulateMovedToEvent(event *EventIntern) {
+
+	if wt.pendingCookie != 0 && event.Mask&(syscall.IN_MOVED_TO|syscall.IN_MOVE_SELF) == 0 {
+		newevent := &EventIntern{Mask: syscall.IN_MOVE_SELF, Wd: 0, Name: "", Cookie: wt.pendingCookie}
+		wt.processSelf(newevent, wt.moved[wt.pendingCookie])
+	}
 }
 
 /*
@@ -561,7 +624,7 @@ func fillWatchTable(inv []string, exv []string, mask uint32, ncb *NotifyCallback
 		ppath := path.Join(pa)
 		wt.addExclude(ppath)
 	}
-	wt.printTable("init watchtable")
+	//D wt.printTable("init watchtable")
 	return wt
 }
 

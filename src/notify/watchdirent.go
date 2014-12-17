@@ -81,7 +81,7 @@ func (wde *WatchDirent) Dequeue() {
 }
 
 // child looks up the name in the elements directory of parent.
-func (wde *WatchDirent) child(event *Event) (wdenew *WatchDirent) {
+func (wde *WatchDirent) child(event *EventIntern) (wdenew *WatchDirent) {
 	name := event.Name
 	wdenew, ok := wde.elements[name]
 	if !ok || wdenew == nil {

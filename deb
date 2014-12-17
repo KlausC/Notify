@@ -1,1 +1,15 @@
-xdb -tty=/dev/pts/1 bin/testnotify
+#! /bin/sh
+# determine terminal with 'sleep 9999' running on it
+TTY="$(ps -fC sleep | awk '/pts.* sleep 9999/{print $6}')"
+TTY="${TTY:-pts/3}"
+[ "$TTY" ] && TTYOPT="-tty=/dev/$TTY"
+
+RFILE=$(mktemp)
+cat >"$RFILE" << ***EOF***
+b main.main
+run ~/gows/xxx
+***EOF***
+
+trap "rm $RFILE" SIGHUP
+
+exec gdb -tui $TTYOPT -d "$GOROOT" -x "$RFILE" bin/testnotify

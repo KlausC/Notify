@@ -5,15 +5,19 @@ import (
 	"syscall"
 	"unsafe"
 	"bytes"
+	"fmt"
 )
 
 // Event convenient variant of InotifyEvent
-type Event struct {
+type EventIntern struct {
 	Wd     uint32
 	Mask   uint32
 	Cookie uint32
 	Name   string
 }
+
+// maximal size of file name
+const NAME_MAX = 255
 
 /* inotify event masks -- events that are ignored. */
 const IN_IGN uint32 = syscall.IN_ACCESS |
@@ -47,10 +51,14 @@ syscall.IN_ATTRIB |
 
 
 
-// Stat_key is the key of an inode
-type Stat_key struct {
+// StatID is the key of an inode
+type StatKey struct {
 	Dev uint64
 	Ino uint64
+}
+
+func (key StatKey)String() string {
+	return fmt.Sprintf("%x.%x", key.Dev, key.Ino)
 }
 
 /*
@@ -68,8 +76,8 @@ func (addr *Statid) address() uintptr {
 }
 
 // key returns the key part of the Statid (dev, ino)
-func (s *Statid) key() Stat_key {
-	return Stat_key{s.filestat.Dev, s.filestat.Ino}
+func (s *Statid) key() StatKey {
+	return StatKey{s.filestat.Dev, s.filestat.Ino}
 }
 
 // reset the MODIFY and CLOSE bits
@@ -153,14 +161,14 @@ func (er *EventReader) Close() {
 	ReadEvent reads the next event from inotify file descriptor.
 	The readbuffer size must be able to contain at least one maximal size InotifyEvent
 */
-func (er *EventReader) NextEvent() (ev *Event, err error) {
+func (er *EventReader) NextEvent() (ev *EventIntern, err error) {
 
 	const eventsize = uint32(syscall.SizeofInotifyEvent)
 	for true {
 		if er.pos+eventsize <= er.max {
 			event := eventPointer(&er.readbuffer[er.pos])
 			if er.pos+eventsize+event.Len <= er.max {
-				ev = &Event{uint32(event.Wd), event.Mask, event.Cookie, eventName(event)}
+				ev = &EventIntern{uint32(event.Wd), event.Mask, event.Cookie, eventName(event)}
 				er.pos += eventsize + event.Len
 				break
 			}
