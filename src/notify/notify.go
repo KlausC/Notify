@@ -20,11 +20,13 @@ type Event struct {
 NotifyCallbacks is a list of callback function provided by the user
 */
 type NotifyCallbacks struct {
+	Init   InitCallback
 	Report ReportCallback
 	Event  EventCallback
 }
 
 type (
+	InitCallback   func()
 	ReportCallback func(string, *EventIntern)
 	EventCallback  func(ev *Event)
 )
@@ -148,7 +150,7 @@ func (wt *WT) addWatch(wde *WatchDirent) {
 		return
 	}
 	wt.data[wde.wd] = wde
-	fmt.Printf("node+ %d %s\n", wd, path)
+	//D fmt.Printf("node+ %d %s\n", wd, path)
 	return
 }
 
@@ -158,7 +160,7 @@ func (wt *WT) addWatch(wde *WatchDirent) {
 func (wt *WT) removeWatch(wde *WatchDirent) {
 	wd := wde.wd
 	if wd > 0 {
-		fmt.Printf("node- %d %s\n", wd, wde.Path())
+		//D fmt.Printf("node- %d %s\n", wd, wde.Path())
 		err := wt.reader.removeWatch(wd)
 		if err != nil {
 			// report(err, "inotify_rm_watch", strconv.FormatInt(int64(wd), 10), 0)
@@ -331,8 +333,7 @@ func (wt *WT) processSelf(event *EventIntern, wde *WatchDirent) int {
 
 	switch {
 	case mask&syscall.IN_IGNORED != 0:
-		path := wde.Path()
-		fmt.Printf("node- %d %s\n", event.Wd, path)
+		//D fmt.Printf("node- %d %s\n", event.Wd, wde.Path())
 		delete(wt.data, event.Wd)
 	case mask&syscall.IN_MOVE_SELF != 0:
 		// move-to is missing or not subfile of supervised directory */
@@ -371,7 +372,7 @@ func (wt *WT) processCreate(event *EventIntern, wde *WatchDirent) int {
 	if wdenew.next != nil && createEvent {
 		wt.callback(LINK, event, wdenew, false, wdenew.next.Path())
 	} else {
-		wt.callback(CREATE, event, wdenew, !createEvent)
+		wt.callback(CREATE, event, wdenew, true)
 	}
 	if mask&syscall.IN_ISDIR != 0 {
 		if wt.walkDirectory(wdenew, addWatches2) == nil {
@@ -675,6 +676,9 @@ func ProcessNotifyEvents(inv []string, exv []string, mask uint32, ncb *NotifyCal
 	wt := fillWatchTable(inv, exv, mask, ncb)
 	if wt == nil {
 		return 1
+	}
+	if wt.ncb.Init != nil {
+		wt.ncb.Init()
 	}
 	return wt.internalProcessNotify()
 }

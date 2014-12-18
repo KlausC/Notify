@@ -58,7 +58,7 @@ type StatKey struct {
 }
 
 func (key StatKey)String() string {
-	return fmt.Sprintf("%x.%x", key.Dev, key.Ino)
+	return fmt.Sprintf("%x.%d", key.Dev, key.Ino)
 }
 
 /*

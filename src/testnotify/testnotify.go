@@ -10,6 +10,10 @@ func maskToString(mask uint32) string {
 	return notify.MaskToString(mask)
 }
 
+func doInit() {
+	fmt.Printf("All watches are set up - starting events processing.\n")
+}
+
 func doReport(path string, event *notify.EventIntern) {
 	fmt.Printf("event: %s %s %d\n", path, maskToString(event.Mask), event.Cookie)
 }
@@ -18,6 +22,7 @@ func doEvent(ev *notify.Event) {
 }
 
 var callbacks = notify.NotifyCallbacks{
+	doInit,
 	doReport,
 	doEvent,
 }
