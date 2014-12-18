@@ -3,7 +3,7 @@ package notify
 import (
 	"fmt"
 	"os"
-	"path"
+	"path/filepath"
 	"syscall"
 )
 
@@ -615,14 +615,24 @@ func fillWatchTable(inv []string, exv []string, mask uint32, ncb *NotifyCallback
 	}
 	wt.ncb = ncb
 	for _, pa := range inv {
-		ppath := path.Join(pa)
+		ppath, err := filepath.Abs(filepath.Clean(pa))
+		if err != nil {
+			report(nil, "No include file", pa, 2)
+			return
+		}
 		wde := wt.statNewFile(&wt.root, ppath)
 		if wde != nil && wt.walkDirectory(wde, addWatches) == nil {
+			fmt.Printf("Include %q\n", ppath)
 			wt.addWatch(wde)
 		}
 	}
 	for _, pa := range exv {
-		ppath := path.Join(pa)
+		ppath, err := filepath.Abs(filepath.Clean(pa))
+		if err != nil {
+			report(nil, "No exclude file", pa, 2)
+			return
+		}
+		fmt.Printf("Exclude %q\n", ppath)
 		wt.addExclude(ppath)
 	}
 	//D wt.printTable("init watchtable")
@@ -674,11 +684,13 @@ func ProcessNotifyEvents(inv []string, exv []string, mask uint32, ncb *NotifyCal
 	}()
 
 	wt := fillWatchTable(inv, exv, mask, ncb)
-	if wt == nil {
+
+	if wt == nil || len(wt.data) == 0 {
 		return 1
-	}
-	if wt.ncb.Init != nil {
-		wt.ncb.Init()
+	} else {
+		if wt.ncb.Init != nil {
+			wt.ncb.Init()
+		}
 	}
 	return wt.internalProcessNotify()
 }
