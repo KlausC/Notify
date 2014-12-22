@@ -1,11 +1,12 @@
 package notify
 
 import (
-	"os"
-	"syscall"
-	"unsafe"
 	"bytes"
 	"fmt"
+	"os"
+	"syscall"
+	"time"
+	"unsafe"
 )
 
 // Event convenient variant of InotifyEvent
@@ -49,15 +50,13 @@ syscall.IN_ATTRIB |
 	syscall.IN_Q_OVERFLOW |
 	syscall.IN_IGNORED
 
-
-
 // StatID is the key of an inode
 type StatKey struct {
 	Dev uint64
 	Ino uint64
 }
 
-func (key StatKey)String() string {
+func (key StatKey) String() string {
 	return fmt.Sprintf("%x.%d", key.Dev, key.Ino)
 }
 
@@ -112,6 +111,7 @@ type EventReader struct {
 	readbuffer []byte
 	pos        uint32
 	max        uint32
+	channel    chan *EventIntern
 }
 
 // Init initialise EventReader
@@ -184,6 +184,26 @@ func (er *EventReader) NextEvent() (ev *EventIntern, err error) {
 		er.max += uint32(n)
 	}
 	return
+}
+
+func (er *EventReader) NextEventWait(d time.Duration) (event *EventIntern, err error) {
+	if er.channel == nil {
+		er.channel = make(chan *EventIntern, 1)
+		go func() {
+			var event *EventIntern
+			for event, err = er.NextEvent(); err == nil; event, err = er.NextEvent() {
+				er.channel <- event
+			}
+			close(er.channel)
+			er.channel = nil
+		}()
+	}
+	select {
+	case event = <-er.channel:
+		return
+	case <-time.After(d):
+		return
+	}
 }
 
 // eventName extracts the name string from the Name byte slice of the InotifyEvent

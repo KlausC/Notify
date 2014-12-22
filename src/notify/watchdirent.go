@@ -1,22 +1,30 @@
 package notify
 
 import (
-	"path"
+	"path/filepath"
 )
-
 
 /*
 	WatchDirent represents a directory entry internally.
-	
+
 */
 type WatchDirent struct {
-	wd       uint32			// watch descriptor if this is a directory
-	name     string			// name within parent directory (NAME_MAX)
-	parent   *WatchDirent	// pointer to parent directory
-	next     *WatchDirent	// pointer to next file with same inode - nil for directory
-	statid   *Statid		// pointer to file status information (per inode)
-	cookie   uint32			// transiently used between move-to and moved-from events
-	elements map[string]*WatchDirent	// collection of all directory elements for directory
+	wd       uint32                  // watch descriptor if this is a directory
+	name     string                  // name within parent directory (NAME_MAX)
+	parent   *WatchDirent            // pointer to parent directory
+	next     *WatchDirent            // pointer to next file with same inode - nil for directory
+	statid   *Statid                 // pointer to file status information (per inode)
+	cookie   uint32                  // transiently used between move-to and moved-from events
+	elements map[string]*WatchDirent // collection of all directory elements for directory
+}
+
+// createWatchDirent constructor
+func createWatchDirent(parent *WatchDirent, name string, isdir bool) (wdenew *WatchDirent) {
+	wdenew = &WatchDirent{name: name, parent: parent}
+	if isdir {
+		wdenew.elements = make(map[string]*WatchDirent)
+	}
+	return
 }
 
 func (wde *WatchDirent) Cleanup() {
@@ -34,33 +42,34 @@ func (wde *WatchDirent) Cookie() uint32 {
 }
 
 // Path constructs complete path of hierarchy
-func (wde *WatchDirent) Path1() (pa string) {
+func (wde *WatchDirent) path1() (pa string) {
 	pa = wde.name
 	if wde.parent == nil {
 		return
 	}
-	dir := wde.parent.Path1()
+	dir := wde.parent.path1()
 	if len(dir) > 0 {
-		pa = path.Join(dir, pa)
+		pa = filepath.Join(dir, pa)
 	}
 	return
 }
-
 
 // Path adds a name to a directory path defined by this wde.
-func (wde *WatchDirent) Path(names ... string) (pa string) {
-	pa = wde.Path1()
+func (wde *WatchDirent) Path(names ...string) (pa string) {
+	pa = wde.path1()
 	for _, name := range names {
-		pa = path.Join(pa, name)
+		pa = filepath.Join(pa, name)
 	}
 	return
 }
-
-// createWatchDirent constructor
-func createWatchDirent(parent *WatchDirent, name string, isdir bool) (wdenew *WatchDirent) {
-	wdenew = &WatchDirent{name: name, parent: parent}
-	if isdir {
-		wdenew.elements = make(map[string]*WatchDirent)
+// find alternative wde, which refers to the same inode
+// if no alternative found (because number of tracked links is 1) return nil
+func (wde *WatchDirent) Alternative() (wdealt *WatchDirent) {
+	for wden := wde.statid.first; wden != nil; wden = wden.next {
+		if wden != wde {
+			wdealt = wden
+			return
+		}
 	}
 	return
 }

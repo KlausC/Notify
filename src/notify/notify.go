@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 type Event struct {
@@ -316,11 +317,9 @@ func (wt *WT) callback(et EventType, event *EventIntern, wde *WatchDirent, data 
 		ev.EventType = et
 		ev.IsDir = wde.statid.filestat.Mode&syscall.S_IFDIR != 0
 		ev.DataModified = data
+		ev.Path = wde.Path()
 		if len(altpath) > 0 {
-			ev.Path = altpath[0]
-			ev.Path2 = wde.Path()
-		} else {
-			ev.Path = wde.Path()
+			ev.Path2 = altpath[0]
 		}
 		ev.Key = wde.statid.key()
 		wt.ncb.Event(&ev)
@@ -341,7 +340,7 @@ func (wt *WT) processSelf(event *EventIntern, wde *WatchDirent) int {
 			wt.removeHierarchy(wde)
 			event.Mask |= syscall.IN_ISDIR
 			wt.pendingCookie = 0
-			wt.callback(DELETE, event, wde, false)
+			wt.callbackDelete(event, wde)
 		}
 	case mask&syscall.IN_DELETE_SELF != 0:
 		if wde.parent.wd == 0 {
@@ -431,10 +430,21 @@ func (wt *WT) processDelete(event *EventIntern, wdenew *WatchDirent) int {
 	if wdenew == nil {
 		return 0
 	}
-	wt.callback(DELETE, event, wdenew, wdenew.linkCount() <= 1)
+	wt.callbackDelete(event, wdenew)
 	wt.removeHierarchy(wdenew)
 	delete(wdenew.parent.elements, wdenew.name)
 	return 0
+}
+
+// call callback for delete event
+// additional alternative path when file content preserved
+func (wt *WT) callbackDelete(event *EventIntern, wde *WatchDirent) {
+	alt := wde.Alternative()
+	if alt == nil {
+		wt.callback(DELETE, event, wde, true)
+	} else {
+		wt.callback(DELETE, event, wde, false, alt.Path())
+	}
 }
 
 // modifyComplete is called after a file contents change is concluded.
@@ -511,6 +521,10 @@ func (wt *WT) processSubfile(event *EventIntern, wde *WatchDirent) (res int) {
  */
 func (wt *WT) processEvent(event *EventIntern) (res int) {
 
+	wt.simulateMovedToEvent(event) // test for missing movedTo event when file moved out
+	if event == nil {
+		return
+	}
 	name := event.Name
 	mask := event.Mask
 	wt.debug(event)
@@ -528,8 +542,6 @@ func (wt *WT) processEvent(event *EventIntern) (res int) {
 		return 0 // silently ignore
 	}
 
-	wt.simulateMovedToEvent(event) // test for missing movedTo event when file moved out
-
 	if len(name) == 0 {
 		res = wt.processSelf(event, wde)
 	} else {
@@ -544,7 +556,9 @@ func (wt *WT) processEvent(event *EventIntern) (res int) {
 
 func (wt *WT) simulateMovedToEvent(event *EventIntern) {
 
-	if wt.pendingCookie != 0 && event.Mask&(syscall.IN_MOVED_TO|syscall.IN_MOVE_SELF) == 0 {
+	if wt.pendingCookie != 0 &&
+		(event == nil || event.Mask&(syscall.IN_MOVED_TO|syscall.IN_MOVE_SELF) == 0) {
+
 		newevent := &EventIntern{Mask: syscall.IN_MOVE_SELF, Wd: 0, Name: "", Cookie: wt.pendingCookie}
 		wt.processSelf(newevent, wt.moved[wt.pendingCookie])
 	}
@@ -648,7 +662,7 @@ func (wt *WT) internalProcessNotify() (stop int) {
 		stop = 1
 	}
 	for stop == 0 {
-		ev, err := wt.reader.NextEvent()
+		ev, err := wt.reader.NextEventWait(time.Second * 5)
 		if err != nil {
 			return 1
 		}
