@@ -10,9 +10,11 @@ func StartAll(target string, includes []string, excludes []string) {
 	chan1 := make(chan *Request)
 	chan2 := make(chan *Request)
 	chan2a := make(chan *Request)
+	chan3 := make(chan *Request)
 	go startFrontend(chan1, target, includes, excludes)
-	go startBackend(chan2, chan2a, time.Second*15)
-	startQueue(chan1, chan2, time.Second*5)
+	go startQueue(chan1, chan2, time.Second*5)
+	go startBackend(chan3)
+	startMainThread(chan2, chan2a, chan3, time.Second*15)
 }
 
 func startFrontend(evchan chan<- *Request, target string, includes []string, excludes []string) {
@@ -66,14 +68,47 @@ func startQueue(inchan <-chan *Request, outchan chan<- *Request, delay time.Dura
 	}
 }
 
-func startBackend(inchan <-chan *Request, inchana <-chan *Request, delay time.Duration) {
+func startMainThread(inchan <-chan *Request, inchana <-chan *Request, outchan chan<- *Request, delay time.Duration) {
+	queue := &RequestFifo{}
+	var timechan <-chan time.Time
+	for {
+		select {
+		case ev := <-inchan:
+			queue.Insert(ev)
+			modifyQueue(queue, ev)
+			evl := queue.First()
+			timechan = setTimer(evl, delay)
+			fmt.Printf("Main in: %s\n", ev)
+		case ev := <-inchana:
+			queue.Insert(ev)
+			modifyQueue(queue, ev)
+			evl := queue.First()
+			timechan = setTimer(evl, delay)
+			fmt.Printf("Main oob: %s\n", ev)
+		case t := <-timechan:
+			timechan = nil
+			for evl := queue.First(); evl != nil; evl = queue.First() {
+				//D fmt.Printf("Time now: %s first %s\n", t, evl.eventTime.Add(delay))
+				if t.After(evl.eventTime.Add(delay)) {
+					evl = queue.Retrieve()
+					outchan <- evl
+					fmt.Printf("Main out: %s\n", evl)
+				} else {
+					timechan = setTimer(evl, delay)
+					break
+				}
+			}
+		}
+
+	}
+}
+
+func startBackend(inchan <-chan *Request) {
 
 	for {
 		select {
 		case ev := <-inchan:
 			fmt.Printf("Backend: %v\n", *ev)
-		case ev := <-inchana:
-			fmt.Printf("Backend oob: %v\n", *ev)
 		}
 	}
 }
@@ -94,7 +129,7 @@ func modifyQueue(queue *RequestFifo, ev *Request) {
 		oldpath := ev.sourceAlt
 		pred := func(req *Request) bool {
 			rt := req.eventType
-			return rt == notify.CHANGE || rt == notify.CREATE 
+			return rt == notify.CHANGE || rt == notify.CREATE
 		}
 		queue.RewriteSource(newpath, oldpath, pred)
 

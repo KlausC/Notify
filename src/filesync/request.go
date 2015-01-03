@@ -3,6 +3,7 @@ package filesync
 import (
 	"notify"
 	"time"
+	"fmt"
 )
 
 // Request represents a destination side file system modification request
@@ -16,6 +17,12 @@ type Request struct {
 	fileSync    *FileSync
 	eventTime   time.Time
 }
+
+func (r Request)String() string {
+	return fmt.Sprintf("%s %s %s %s %s %s",
+		 r.eventType, r.source, r.sourceAlt, r.dest, r.destAlt, r.eventTime)
+}
+
 
 func NewRequest(fs *FileSync, ev *notify.Event) (res *Request) {
 	res = &Request{
