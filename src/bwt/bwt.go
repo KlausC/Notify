@@ -1,10 +1,57 @@
-package main
+package bwt
 
 import (
 	"fmt"
+	"io"
 	"sort"
-	"bytes"
 )
+
+const MAXBUFF = 1024 * 1024 * 1024 * 2
+
+func EncodeBwtStream(reader io.ByteReader, writer io.ByteWriter) {
+	bain := make([]byte, 0, MAXBUFF)
+	i := 0
+	for in, err := reader.ReadByte(); err == nil; in, err = reader.ReadByte() {
+		bain = append(bain, in)
+		i++
+	}
+	index, baout := EncodeBwt(bain)
+	writer.WriteByte(byte((index >> 24) & 0xff))
+	writer.WriteByte(byte((index >> 16) & 0xff))
+	writer.WriteByte(byte((index >> 8) & 0xff))
+	writer.WriteByte(byte(index & 0xff))
+
+	for i := 0; i < len(baout); i++ {
+		err := writer.WriteByte(baout[i])
+		if err != nil {
+			break
+		}
+	}
+}
+
+func DecodeBwtStream(reader io.ByteReader, writer io.ByteWriter) {
+	bain := make([]byte, 0, MAXBUFF)
+	i := 0
+	index0, err := reader.ReadByte()
+	index1, err := reader.ReadByte()
+	index2, err := reader.ReadByte()
+	index3, err := reader.ReadByte()
+	if err != nil {
+		return
+	}
+	index := int(index0)<<8 | int(index1)<<8 | int(index2)<<8 | int(index3)
+	for in, err := reader.ReadByte(); err == nil; in, err = reader.ReadByte() {
+		bain = append(bain, in)
+		i++
+	}
+	baout := DecodeBwt(bain, index)
+	for i := 0; i < len(baout); i++ {
+		err := writer.WriteByte(baout[i])
+		if err != nil {
+			break
+		}
+	}
+}
 
 // sort.Interface type for encoding
 type bwtSort struct {
@@ -86,7 +133,7 @@ function BWT_vorwaerts(text)
   return codiert, index
 end
 */
-func BwtEncode(input []byte) (index int, coded []byte) {
+func EncodeBwt(input []byte) (index int, coded []byte) {
 	s := createBwtSort(input)
 	sort.Sort(s)
 	n := s.n
@@ -182,7 +229,7 @@ function BWT_rueckwaerts(text, index)
   return decodiert
 end
 */
-func BwtDecode(input []byte, index int) (decoded []byte) {
+func DecodeBwt(input []byte, index int) (decoded []byte) {
 	s := createBwtSortD(input)
 	sort.Sort(s)
 	n := s.n
@@ -192,27 +239,4 @@ func BwtDecode(input []byte, index int) (decoded []byte) {
 	}
 	//D fmt.Print(s)
 	return
-}
-
-func trivialtest(str string) {
-	
-	b := bytes.NewBufferString(str)
-	input := b.Bytes()
-	index, coded := BwtEncode(input)
-	fmt.Printf("%d#%s\n", index, coded)
-
-	decoded := BwtDecode(coded, index)
-	fmt.Printf("%s\n", decoded)
-}
-
-func trivialtests() {
-	trivialtest("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	trivialtest("~ananasbanane~")
-	trivialtest("Wikipedia!")
-	trivialtest("Große Änderungen kämen!")
-	trivialtest("Große Änderungen kämen! kämmen Än der ßeße")
-}
-
-func main() {
-	trivialtests()
 }
