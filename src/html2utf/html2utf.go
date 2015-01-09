@@ -275,7 +275,7 @@ func createEntityMap(html bool) *entityMap {
 	emap := new(entityMap)
 	emap.emap = make(map[string][]byte)
 	for i, pair := range trans {
-		if !(html || i <= 4) {
+		if !(html && i <= 4) {
 			key := pair[0]
 			val := make([]byte, len(pair[1]))
 			copy(val, pair[1])
@@ -298,24 +298,33 @@ func splitEntities(data []byte, atEOF bool) (advance int, token []byte, err erro
 	err = nil
 	if ix < 0 {
 		ix = len(data)
+		if ix == 0 {
+			return
+		}
 	}
 	if ix > 0 {
 		advance = ix
 		token = data[0:ix]
-	} else {
-		iy := bytes.IndexByte(data, ';')
-		if iy > 0 {
-			advance = iy + 1
-			token = entity(data[1:iy])
-			if len(token) == 0 {
-				token = data[0 : iy+1]
-			}
-		} else {
-			if len(data) > MAXENT {
-				advance = len(data)
-				token = data
-			}
+		return
+	}
+	iz := bytes.IndexByte(data[1:], '&') + 1
+	iy := bytes.IndexByte(data, ';')
+	if iz > 0 && iy > 0 && iz <= iy {
+		advance = iz
+		token = data[0:iz]
+		return
+	}
+	if iy > 0 {
+		advance = iy + 1
+		token = entity(data[1:iy])
+		if len(token) == 0 {
+			token = data[0 : iy+1]
 		}
+		return
+	}
+	if len(data) > MAXENT {
+		advance = len(data)
+		token = data
 	}
 	return
 }
@@ -335,6 +344,6 @@ var html = flag.Bool("html", false, "do not expand &(quot amp apos lt gt)")
 
 func main() {
 	flag.Parse()
-	createEntityMap(*html)
+	emap = createEntityMap(*html)
 	readloop(os.Stdin, os.Stdout)
 }
