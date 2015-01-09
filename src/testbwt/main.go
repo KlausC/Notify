@@ -49,9 +49,23 @@ func mtftests() {
 	fmt.Printf("decoded: %s\n", decoded)
 }
 
+func entropytest(str string) {
+
+	b := bytes.NewBufferString(str)
+	input := b.Bytes()
+	H := bwt.HBytes(input, 8)
+	fmt.Println(H)
+}
+
+func entropytests() {
+	entropytest(".ananas.")
+	entropytest("Die deutsche Sprache ist nicht schwer, aber unschwer zu verstehen. Das sagt kein Geringerer als der brühmte Philosoph Hermann Siegfried.")
+}
+
 
 func main() {
 	trivialtests()
 	mtftests()
+	entropytests()
 }
 
